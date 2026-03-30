@@ -31,7 +31,6 @@ app.use(cors({
     ],
     credentials: true 
 }));
-
 app.use(bodyParser.json());
 app.use(cookieParser()); // 🔴 READS COOKIES
 
@@ -101,7 +100,7 @@ app.post('/api/verify-otp', async (req, res) => {
                 res.cookie('jwt', token, {
                     httpOnly: true,
                     secure: process.env.NODE_ENV === 'production',
-                    sameSite: 'lax',
+                    sameSite: 'none',
                     maxAge: 7 * 24 * 60 * 60 * 1000
                 });
 
@@ -163,7 +162,7 @@ app.post('/api/complete-profile', async (req, res) => {
         res.cookie('jwt', token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
+            sameSite: 'none',
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
@@ -178,7 +177,7 @@ app.post('/api/logout', (req, res) => {
         httpOnly: true,
         expires: new Date(0),
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
+        sameSite: 'none'
     });
     res.json({ success: true, message: 'Logged out successfully' });
 });
