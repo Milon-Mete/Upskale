@@ -26,6 +26,7 @@ const PORT = process.env.PORT || 5000;
 // 🔴 SECURE CORS FOR COOKIES
 app.use(cors({
     origin: [
+        'http://localhost:5173', 
         'https://upskale-demo.netlify.app'
     ],
     credentials: true 
