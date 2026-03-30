@@ -1,30 +1,60 @@
+// middleware/auth.js
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const adminOnly = async (req, res, next) => {
-  try {
-    // ✅ FIX: Check Headers FIRST.
-    // Also use safe navigation (req.body?) just in case body is undefined.
-    const userId = req.headers['user-id'] || (req.body && req.body.userId);
+// 1. Authenticate any logged-in user
+const requireAuth = async (req, res, next) => {
+    try {
+        // Read the token from the HttpOnly cookie
+        const token = req.cookies.jwt;
 
-    if (!userId) {
-      return res.status(401).json({ message: "Unauthorized: No User ID found in headers." });
+        if (!token) {
+            return res.status(401).json({ message: "Unauthorized: No token provided." });
+        }
+
+        // Verify the token
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        // Find the user and attach to the request object
+        const user = await User.findById(decoded.id).select('-password'); // Exclude password if you have one
+        if (!user) {
+            return res.status(401).json({ message: "Unauthorized: User not found." });
+        }
+
+        req.user = user;
+        next();
+    } catch (error) {
+        console.error("Auth Error:", error.message);
+        res.status(401).json({ message: "Unauthorized: Invalid or expired token." });
     }
-
-    const user = await User.findById(userId);
-
-    if (!user) {
-      return res.status(401).json({ message: "Unauthorized: User not found." });
-    }
-
-    if (user.role !== 'admin') {
-      return res.status(403).json({ message: "Forbidden: Admins only." });
-    }
-
-    next(); // Permission granted
-  } catch (error) {
-    console.error("Middleware Crash:", error); // Log the actual error to your terminal
-    res.status(500).json({ message: "Auth Error: Server crashed checking ID" });
-  }
 };
 
-module.exports = { adminOnly };
+// 2. Authenticate only Admins
+const adminOnly = async (req, res, next) => {
+    try {
+        const token = req.cookies.jwt;
+
+        if (!token) {
+            return res.status(401).json({ message: "Unauthorized: No token provided." });
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.id);
+
+        if (!user) {
+            return res.status(401).json({ message: "Unauthorized: User not found." });
+        }
+
+        if (user.role !== 'admin') {
+            return res.status(403).json({ message: "Forbidden: Admins only." });
+        }
+
+        req.user = user;
+        next();
+    } catch (error) {
+        console.error("Admin Auth Error:", error.message);
+        res.status(401).json({ message: "Unauthorized: Invalid or expired token." });
+    }
+};
+
+module.exports = { requireAuth, adminOnly };

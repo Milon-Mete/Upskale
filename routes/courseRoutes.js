@@ -258,4 +258,59 @@ router.delete('/admin/delete/:id', adminOnly, async (req, res) => {
     }
 });
 
+// ==========================================
+// 📊 ADMIN: GET COURSE ENROLLMENT STATS & DETAILS
+// ==========================================
+router.get('/admin/enrollment-stats', async (req, res) => {
+    try {
+        const stats = await User.aggregate([
+            // 1. Deconstruct the enrolledCourses array so each course is its own document
+            { $unwind: "$enrolledCourses" },
+            // 2. Only look at actual 'Course' items (ignore masterclasses for this specific report if needed)
+            { $match: { "enrolledCourses.itemModel": "Course" } },
+            // 3. Look up the course details from the Course collection
+            {
+                $lookup: {
+                    from: "courses", // Mongoose automatically lowercase and pluralizes collection names
+                    localField: "enrolledCourses.item",
+                    foreignField: "_id",
+                    as: "courseData"
+                }
+            },
+            { $unwind: "$courseData" },
+            // 4. Group everything by the Course ID
+            {
+                $group: {
+                    _id: "$courseData._id",
+                    courseTitle: { $first: "$courseData.title" },
+                    courseCategory: { $first: "$courseData.category" },
+                    totalRevenue: { $sum: "$enrolledCourses.amountPaid" },
+                    enrolledCount: { $sum: 1 },
+                    // 5. Push all the specific student details into an array
+                    students: {
+                        $push: {
+                            userId: "$_id",
+                            name: "$name",
+                            phone: "$phone",
+                            email: "$email",
+                            planType: "$enrolledCourses.planType",
+                            paymentStatus: "$enrolledCourses.paymentStatus",
+                            amountPaid: "$enrolledCourses.amountPaid",
+                            progress: "$enrolledCourses.progress",
+                            purchasedAt: "$enrolledCourses.purchasedAt"
+                        }
+                    }
+                }
+            },
+            // 6. Sort by most enrolled courses first
+            { $sort: { enrolledCount: -1 } }
+        ]);
+
+        res.json({ success: true, stats });
+    } catch (err) {
+        console.error("Stats Error:", err);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
 module.exports = router;

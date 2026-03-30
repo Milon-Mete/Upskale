@@ -10,7 +10,8 @@ const User = require('../models/User');
 const Order = require('../models/Order');
 const Coupon = require('../models/Coupon');
 
-const { adminOnly } = require('../middleware/auth');
+// 🔴 SECURE MIDDLEWARE IMPORTED
+const { adminOnly, requireAuth } = require('../middleware/auth');
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
@@ -43,7 +44,7 @@ router.get('/', async (req, res) => {
 // 2. ADMIN: GET ALL MASTERCLASSES
 // ==========================================
 // This is for your DASHBOARD (Shows everything)
-router.get('/admin/all', async (req, res) => {
+router.get('/admin/all', adminOnly, async (req, res) => {
     try {
         const list = await Masterclass.find({}).sort({ createdAt: -1 });
         res.json(list);
@@ -67,11 +68,13 @@ router.get('/:slug', async (req, res) => {
 });
 
 // ==========================================
-// 4. CREATE MASTERCLASS ORDER (Secure Payment)
+// 4. CREATE MASTERCLASS ORDER (SECURED)
 // ==========================================
-router.post('/create-order', async (req, res) => {
+// 🔒 Added requireAuth
+router.post('/create-order', requireAuth, async (req, res) => {
     try {
-        const { userId, masterclassId, couponCode } = req.body; // <--- 2. Get Coupon Code
+        const { masterclassId, couponCode } = req.body;
+        const userId = req.user._id; // 🔒 Extracted securely from JWT cookie
 
         const masterclass = await Masterclass.findById(masterclassId);
         if (!masterclass) {
@@ -127,7 +130,7 @@ router.post('/create-order', async (req, res) => {
         const options = {
             amount: Math.round(amountToCharge * 100), // Razorpay needs paise
             currency: "INR",
-            receipt: `mc_rcpt_${Date.now()}_${userId.slice(-4)}`,
+            receipt: `mc_rcpt_${Date.now()}_${userId.toString().slice(-4)}`,
             notes: {
                 type: "masterclass_booking",
                 masterclass_title: masterclass.title
@@ -164,12 +167,15 @@ router.post('/create-order', async (req, res) => {
 });
 
 // ==========================================
-// 5. VERIFY MASTERCLASS PAYMENT
+// 5. VERIFY MASTERCLASS PAYMENT (SECURED)
 // ==========================================
-router.post('/verify-payment', async (req, res) => {
+// 🔒 Added requireAuth
+router.post('/verify-payment', requireAuth, async (req, res) => {
     try {
         const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+        const userId = req.user._id; // 🔒 Extracted securely from JWT cookie
 
+        // 1. STRICT CRYPTO VERIFICATION (Runs every time, cannot be bypassed)
         const body = razorpay_order_id + "|" + razorpay_payment_id;
         const expectedSignature = crypto
             .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
@@ -177,11 +183,21 @@ router.post('/verify-payment', async (req, res) => {
             .digest('hex');
 
         if (expectedSignature !== razorpay_signature) {
-            return res.status(400).json({ success: false, message: "Invalid Payment Signature!" });
+            return res.status(400).json({ success: false, message: "Invalid Payment Signature! Transaction rejected." });
         }
 
         const order = await Order.findOne({ razorpayOrderId: razorpay_order_id });
         if (!order) return res.status(404).json({ message: "Order not found" });
+
+        // 🔒 Ensure the active user owns this order
+        if (order.userId.toString() !== userId.toString()) {
+            return res.status(403).json({ message: "Forbidden: Order does not belong to this user." });
+        }
+
+        // Prevent double processing
+        if (order.status === 'paid') {
+            return res.json({ success: true, message: "Order already processed" });
+        }
 
         order.status = 'paid';
         order.razorpayPaymentId = razorpay_payment_id;
@@ -198,7 +214,9 @@ router.post('/verify-payment', async (req, res) => {
             user.enrolledCourses.push({
                 item: order.item,
                 itemModel: 'Masterclass',
-                enrolledAt: new Date()
+                paymentStatus: 'full', 
+                amountPaid: order.amount, 
+                purchasedAt: new Date() 
             });
             await user.save();
 
@@ -220,7 +238,7 @@ router.post('/verify-payment', async (req, res) => {
 // ==========================================
 
 // Create Masterclass
-router.post('/admin/create',adminOnly, async (req, res) => {
+router.post('/admin/create', adminOnly, async (req, res) => {
     try {
         const newItem = new Masterclass(req.body);
         await newItem.save();
@@ -232,7 +250,7 @@ router.post('/admin/create',adminOnly, async (req, res) => {
 });
 
 // Update Masterclass
-router.put('/admin/update/:id',adminOnly, async (req, res) => {
+router.put('/admin/update/:id', adminOnly, async (req, res) => {
     try {
         const updated = await Masterclass.findByIdAndUpdate(
             req.params.id, 
@@ -246,12 +264,59 @@ router.put('/admin/update/:id',adminOnly, async (req, res) => {
 });
 
 // Delete Masterclass
-router.delete('/admin/delete/:id',adminOnly, async (req, res) => {
+router.delete('/admin/delete/:id', adminOnly, async (req, res) => {
     try {
         await Masterclass.findByIdAndDelete(req.params.id);
         res.json({ message: "Deleted" });
     } catch (err) { 
         res.status(500).json({ message: "Server Error" }); 
+    }
+});
+
+// ==========================================
+// 📊 MASTERCLASS ENROLLMENT STATS (SECURED)
+// ==========================================
+// 🔒 Added adminOnly to prevent data leak
+router.get('/admin/enrollment-stats', adminOnly, async (req, res) => {
+    try {
+        const stats = await User.aggregate([
+            { $unwind: "$enrolledCourses" },
+            // Use regex for match to be safe with case sensitivity
+            { $match: { "enrolledCourses.itemModel": { $regex: /^masterclass$/i } } },
+            {
+                $lookup: {
+                    from: "masterclasses", 
+                    localField: "enrolledCourses.item",
+                    foreignField: "_id",
+                    as: "masterclassData" 
+                }
+            },
+            { $unwind: "$masterclassData" },
+            {
+                $group: {
+                    _id: "$masterclassData._id",
+                    title: { $first: "$masterclassData.title" },
+                    expertName: { $first: "$masterclassData.expert.name" },
+                    startDate: { $first: "$masterclassData.schedule.startDate" },
+                    enrolledCount: { $sum: 1 },
+                    students: {
+                        $push: {
+                            name: "$name",
+                            phone: "$phone",
+                            email: "$email",
+                            // This fallback ensures it grabs the right date field
+                            enrolledAt: { $ifNull: ["$enrolledCourses.purchasedAt", "$enrolledCourses.enrolledAt", "$createdAt"] }
+                        }
+                    }
+                }
+            }
+        ]);
+
+        console.log("Found Stats:", JSON.stringify(stats, null, 2));
+        res.json({ success: true, stats });
+    } catch (err) {
+        console.error("Aggregation Error:", err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
