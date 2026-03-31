@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 
+// 🔴 IMPORT SECURITY MIDDLEWARE
+const { requireAuth, adminOnly } = require('./middleware/auth');
+
 // --- TWILIO INITIALIZATION ---
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -25,7 +28,8 @@ const PORT = process.env.PORT || 5000;
 
 // 🔴 SECURE CORS FOR COOKIES
 app.use(cors({
-    origin: [ 
+    origin: [
+        'http://localhost:5173', 
         'https://upskale-demo.netlify.app'
     ],
     credentials: true 
@@ -39,7 +43,7 @@ mongoose.connect(process.env.MONGO_URI)
     .catch(err => console.error("❌ DB Error:", err));
 
 // ==========================================
-// 👤 REAL TWILIO AUTH ROUTES
+// 👤 REAL TWILIO AUTH ROUTES (PUBLIC)
 // ==========================================
 
 app.post('/api/send-otp', async (req, res) => {
@@ -117,7 +121,7 @@ app.post('/api/verify-otp', async (req, res) => {
 });
 
 // ==========================================
-// 👤 USER PROFILE & REGISTRATION
+// 👤 USER PROFILE & REGISTRATION (PUBLIC)
 // ==========================================
 
 app.post('/api/complete-profile', async (req, res) => {
@@ -182,11 +186,17 @@ app.post('/api/logout', (req, res) => {
 });
 
 // ==========================================
-// USER & ADMIN QUERIES
+// USER & ADMIN QUERIES (SECURED)
 // ==========================================
 
-app.get('/api/user/:id', async (req, res) => {
+// 🔒 Added requireAuth to protect user data
+app.get('/api/user/:id', requireAuth, async (req, res) => {
     try {
+        // Prevent users from fetching other users' data
+        if (req.user._id.toString() !== req.params.id && req.user.role !== 'admin') {
+            return res.status(403).json({ message: "Forbidden. You can only view your own profile." });
+        }
+
         const user = await User.findById(req.params.id)
             .populate({
                 path: 'enrolledCourses.item', 
@@ -213,7 +223,8 @@ app.get('/api/user/:id', async (req, res) => {
     }
 });
 
-app.get('/api/admin/all-users', async (req, res) => {
+// 🔒 Added adminOnly to prevent massive data leak
+app.get('/api/admin/all-users', adminOnly, async (req, res) => {
   try {
     const users = await User.find({})
       .select('-password')
@@ -259,7 +270,8 @@ app.get('/api/admin/all-users', async (req, res) => {
 // 🎓 CERTIFICATE ROUTES
 // ==========================================
 
-app.post('/api/admin/issue-certificate', async (req, res) => {
+// 🔒 Added adminOnly to prevent fake certificate generation
+app.post('/api/admin/issue-certificate', adminOnly, async (req, res) => {
   const { phone, courseName, certificateDate, planType, score, itemModel } = req.body;
 
   if (!phone || !courseName || !certificateDate) {
@@ -371,7 +383,8 @@ app.post('/api/admin/issue-certificate', async (req, res) => {
   }
 });
 
-app.post('/api/admin/issue-external-certificate', async (req, res) => {
+// 🔒 Added adminOnly
+app.post('/api/admin/issue-external-certificate', adminOnly, async (req, res) => {
   const { studentName, phone, courseName, certificateDate, planType, score } = req.body;
 
   if (!studentName || !courseName || !certificateDate) {
@@ -441,6 +454,7 @@ app.post('/api/admin/issue-external-certificate', async (req, res) => {
   }
 });
 
+// ✅ Public Route: Anyone can verify a certificate ID
 app.get('/api/public/certificate/:id', async (req, res) => {
     try {
         const certId = req.params.id;
@@ -468,7 +482,8 @@ app.get('/api/public/certificate/:id', async (req, res) => {
     }
 });
 
-app.get('/api/user/certificates/:phone', async (req, res) => {
+// 🔒 Added requireAuth
+app.get('/api/user/certificates/:phone', requireAuth, async (req, res) => {
     try {
         let phone = req.params.phone;
         let cleanPhone = phone.replace(/[\s-]/g, '');
@@ -494,7 +509,8 @@ app.get('/api/user/certificates/:phone', async (req, res) => {
     }
 });
 
-app.get('/api/admin/search-certificates', async (req, res) => {
+// 🔒 Added adminOnly
+app.get('/api/admin/search-certificates', adminOnly, async (req, res) => {
     try {
         const { q } = req.query;
         if (!q) {
