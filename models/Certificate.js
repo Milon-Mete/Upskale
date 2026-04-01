@@ -8,7 +8,7 @@ const certificateSchema = new mongoose.Schema({
   
   // ✅ UPDATED: Dynamic reference to support Courses, Cohorts, and Masterclasses
   course: { type: mongoose.Schema.Types.ObjectId, required: true, refPath: 'itemModel' },
-  itemModel: { type: String, required: true, enum: ['Course', 'Cohort', 'Masterclass'], default: 'Course' },
+  itemModel: { type: String, required: true, enum: ['Course', 'Cohort', 'Masterclass','BiteSizeCourse'], default: 'Course' },
   
   courseName: { type: String, required: true },
   planType: { type: String, default: 'recorded' },

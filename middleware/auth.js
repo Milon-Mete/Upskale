@@ -1,6 +1,7 @@
 // middleware/auth.js
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const BiteSizeCourse = require('../models/BiteSizeCourse');
 
 // 1. Authenticate any logged-in user
 const requireAuth = async (req, res, next) => {

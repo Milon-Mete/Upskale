@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 
+// 🔴 IMPORT SECURITY MIDDLEWARE
+const { requireAuth, adminOnly } = require('./middleware/auth');
+
 // --- TWILIO INITIALIZATION ---
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -40,7 +43,7 @@ mongoose.connect(process.env.MONGO_URI)
     .catch(err => console.error("❌ DB Error:", err));
 
 // ==========================================
-// 👤 REAL TWILIO AUTH ROUTES
+// 👤 REAL TWILIO AUTH ROUTES (PUBLIC)
 // ==========================================
 
 app.post('/api/send-otp', async (req, res) => {
@@ -100,7 +103,7 @@ app.post('/api/verify-otp', async (req, res) => {
                 res.cookie('jwt', token, {
                     httpOnly: true,
                     secure: process.env.NODE_ENV === 'production',
-                    sameSite: 'lax',
+                    sameSite: 'none',
                     maxAge: 7 * 24 * 60 * 60 * 1000
                 });
 
@@ -118,7 +121,7 @@ app.post('/api/verify-otp', async (req, res) => {
 });
 
 // ==========================================
-// 👤 USER PROFILE & REGISTRATION
+// 👤 USER PROFILE & REGISTRATION (PUBLIC)
 // ==========================================
 
 app.post('/api/complete-profile', async (req, res) => {
@@ -162,7 +165,7 @@ app.post('/api/complete-profile', async (req, res) => {
         res.cookie('jwt', token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
+            sameSite: 'none',
             maxAge: 7 * 24 * 60 * 60 * 1000 
         });
 
@@ -177,21 +180,28 @@ app.post('/api/logout', (req, res) => {
         httpOnly: true,
         expires: new Date(0),
         secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
+        sameSite: 'none'
     });
     res.json({ success: true, message: 'Logged out successfully' });
 });
 
 // ==========================================
-// USER & ADMIN QUERIES
+// USER & ADMIN QUERIES (SECURED)
 // ==========================================
 
-app.get('/api/user/:id', async (req, res) => {
+// 🔒 Added requireAuth to protect user data
+app.get('/api/user/:id', requireAuth, async (req, res) => {
     try {
+        if (req.user._id.toString() !== req.params.id && req.user.role !== 'admin') {
+            return res.status(403).json({ message: "Forbidden. You can only view your own profile." });
+        }
+
+        // --- 🔴 THE BULLETPROOF FETCH ---
         const user = await User.findById(req.params.id)
             .populate({
                 path: 'enrolledCourses.item', 
-                select: 'title thumbnail bannerImage slug schedule liveStartDate pricing meetingLink' 
+                // We select ALL possible fields across ALL models so nothing gets stripped out
+                select: 'title highlight image thumbnail bannerImage slug schedule liveStartDate pricing meetingLink' 
             })
             .populate({
                 path: 'referredBy', 
@@ -200,12 +210,17 @@ app.get('/api/user/:id', async (req, res) => {
             
         if (!user) return res.status(404).json({ message: "User not found" });
 
+        // Bypass Mongoose nested-array bugs for certificates by fetching directly
+        const myCertificates = await Certificate.find({ user: req.params.id }).sort({ issuedDate: -1 });
+
         const myReferrals = await Referral.find({ referrerId: req.params.id })
             .populate('referredUserId', 'name _id createdAt') 
             .sort({ createdAt: -1 }); 
 
+        // Assemble the final payload
         const userData = user.toObject();
         userData.referralHistory = myReferrals; 
+        userData.earnedCertificates = myCertificates; 
 
         res.json(userData);
     } catch (err) { 
@@ -214,7 +229,8 @@ app.get('/api/user/:id', async (req, res) => {
     }
 });
 
-app.get('/api/admin/all-users', async (req, res) => {
+// 🔒 Added adminOnly to prevent massive data leak
+app.get('/api/admin/all-users', adminOnly, async (req, res) => {
   try {
     const users = await User.find({})
       .select('-password')
@@ -260,7 +276,8 @@ app.get('/api/admin/all-users', async (req, res) => {
 // 🎓 CERTIFICATE ROUTES
 // ==========================================
 
-app.post('/api/admin/issue-certificate', async (req, res) => {
+// 🔒 Added adminOnly to prevent fake certificate generation
+app.post('/api/admin/issue-certificate', adminOnly, async (req, res) => {
   const { phone, courseName, certificateDate, planType, score, itemModel } = req.body;
 
   if (!phone || !courseName || !certificateDate) {
@@ -372,7 +389,8 @@ app.post('/api/admin/issue-certificate', async (req, res) => {
   }
 });
 
-app.post('/api/admin/issue-external-certificate', async (req, res) => {
+// 🔒 Added adminOnly
+app.post('/api/admin/issue-external-certificate', adminOnly, async (req, res) => {
   const { studentName, phone, courseName, certificateDate, planType, score } = req.body;
 
   if (!studentName || !courseName || !certificateDate) {
@@ -442,6 +460,7 @@ app.post('/api/admin/issue-external-certificate', async (req, res) => {
   }
 });
 
+// ✅ Public Route: Anyone can verify a certificate ID
 app.get('/api/public/certificate/:id', async (req, res) => {
     try {
         const certId = req.params.id;
@@ -469,7 +488,8 @@ app.get('/api/public/certificate/:id', async (req, res) => {
     }
 });
 
-app.get('/api/user/certificates/:phone', async (req, res) => {
+// 🔒 Added requireAuth
+app.get('/api/user/certificates/:phone', requireAuth, async (req, res) => {
     try {
         let phone = req.params.phone;
         let cleanPhone = phone.replace(/[\s-]/g, '');
@@ -495,7 +515,8 @@ app.get('/api/user/certificates/:phone', async (req, res) => {
     }
 });
 
-app.get('/api/admin/search-certificates', async (req, res) => {
+// 🔒 Added adminOnly
+app.get('/api/admin/search-certificates', adminOnly, async (req, res) => {
     try {
         const { q } = req.query;
         if (!q) {
