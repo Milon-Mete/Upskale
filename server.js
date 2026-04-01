@@ -192,11 +192,18 @@ app.post('/api/logout', (req, res) => {
 // 🔒 Added requireAuth to protect user data
 app.get('/api/user/:id', requireAuth, async (req, res) => {
     try {
+<<<<<<< HEAD
+=======
+        // Prevent users from fetching other users' data
+>>>>>>> ad0785ff6dfdfa8c4545151c816374a5893ec7f6
         if (req.user._id.toString() !== req.params.id && req.user.role !== 'admin') {
             return res.status(403).json({ message: "Forbidden. You can only view your own profile." });
         }
 
+<<<<<<< HEAD
         // --- 🔴 THE BULLETPROOF FETCH ---
+=======
+>>>>>>> ad0785ff6dfdfa8c4545151c816374a5893ec7f6
         const user = await User.findById(req.params.id)
             .populate({
                 path: 'enrolledCourses.item', 
