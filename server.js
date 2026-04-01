@@ -26,12 +26,16 @@ const BiteSizeCourse = require('./models/BiteSizeCourse');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// 🔴 SECURE CORS FOR COOKIES
 app.use(cors({
-    origin: [
-        'http://localhost:5173', 
-        'https://upskale-demo.netlify.app'
-    ],
+    // 🔴 Remove the array and use a dynamic function to handle multiple origins safely
+    origin: function (origin, callback) {
+        const allowedOrigins = ['http://localhost:5173', 'https://upskale-demo.netlify.app'];
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true 
 }));
 app.use(bodyParser.json());
@@ -192,40 +196,60 @@ app.post('/api/logout', (req, res) => {
 // 🔒 Added requireAuth to protect user data
 app.get('/api/user/:id', requireAuth, async (req, res) => {
     try {
-        // 1. Prevent users from fetching other users' data (Security Check)
         if (req.user._id.toString() !== req.params.id && req.user.role !== 'admin') {
             return res.status(403).json({ message: "Forbidden. You can only view your own profile." });
         }
 
-        // 2. The Fetching Logic
-        const user = await User.findById(req.params.id)
-            .populate({
-                path: 'enrolledCourses.item', 
-                // We select ALL possible fields across ALL models so nothing gets stripped out
-                select: 'title highlight image thumbnail bannerImage slug schedule liveStartDate pricing meetingLink' 
-            })
-            .populate({
-                path: 'referredBy', 
-                select: 'name _id' 
-            });
+        // 1. Fetch user as a plain JavaScript object (.lean()) so we can manually fix data
+        const userDoc = await User.findById(req.params.id)
+            .populate({ path: 'referredBy', select: 'name _id' })
+            .lean();
             
-        if (!user) return res.status(404).json({ message: "User not found" });
+        if (!userDoc) return res.status(404).json({ message: "User not found" });
 
-        // Bypass Mongoose nested-array bugs for certificates by fetching directly
-        const myCertificates = await Certificate.find({ user: req.params.id }).sort({ issuedDate: -1 });
+        // --- 🔴 THE MANUAL HUNTER (Fixes "Loading Course" Typos) 🔴 ---
+        if (userDoc.enrolledCourses && userDoc.enrolledCourses.length > 0) {
+            for (let i = 0; i < userDoc.enrolledCourses.length; i++) {
+                let enrollment = userDoc.enrolledCourses[i];
+                let courseId = enrollment.item;
+                
+                if (courseId && typeof courseId !== 'object') { // Only hunt if not already populated
+                    let courseData = null;
+                    
+                    // Force search in all potential collections
+                    courseData = await BiteSizeCourse.findById(courseId).select('title highlight image thumbnail slug').lean();
+                    if (!courseData) {
+                        courseData = await Masterclass.findById(courseId).select('title image thumbnail slug schedule meetingLink').lean();
+                    }
+                    if (!courseData) {
+                        courseData = await Course.findById(courseId).select('title image thumbnail slug pricing').lean();
+                    }
 
+                    // Manually attach the real data to the enrollment object
+                    if (courseData) {
+                        enrollment.item = courseData;
+                    }
+                }
+            }
+        }
+
+        // 2. Fetch Certificates manually 
+        const myCertificates = await Certificate.find({ 
+            $or: [{ user: req.params.id }, { phone: userDoc.phone }] 
+        }).sort({ issuedDate: -1 });
+
+        // 3. Fetch Referrals
         const myReferrals = await Referral.find({ referrerId: req.params.id })
             .populate('referredUserId', 'name _id createdAt') 
             .sort({ createdAt: -1 }); 
 
-        // 3. Assemble the final payload
-        const userData = user.toObject();
-        userData.referralHistory = myReferrals; 
-        userData.earnedCertificates = myCertificates; 
+        // 4. Assemble payload
+        userDoc.referralHistory = myReferrals; 
+        userDoc.earnedCertificates = myCertificates; 
 
-        res.json(userData);
+        res.json(userDoc);
     } catch (err) { 
-        console.error(err);
+        console.error("User Route Error:", err);
         res.status(500).json({ message: "Server Error" }); 
     }
 });
