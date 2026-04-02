@@ -26,18 +26,7 @@ const BiteSizeCourse = require('./models/BiteSizeCourse');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({
-    // 🔴 Remove the array and use a dynamic function to handle multiple origins safely
-    origin: function (origin, callback) {
-        const allowedOrigins = ['http://localhost:5173', 'https://upskale-demo.netlify.app'];
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true 
-}));
+app.use(cors());
 app.use(bodyParser.json());
 app.use(cookieParser()); // 🔴 READS COOKIES
 
