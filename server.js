@@ -26,17 +26,25 @@ const BiteSizeCourse = require('./models/BiteSizeCourse');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://upskale-demo.netlify.app'
+];
+
+app.set('trust proxy', 1);
 app.use(cors({
-    // 🔴 Remove the array and use a dynamic function to handle multiple origins safely
-    origin: function (origin, callback) {
-        const allowedOrigins = ['http://localhost:5173', 'https://upskale-demo.netlify.app'];
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true 
+  origin: function (origin, callback) {
+    console.log("🌐 Origin:", origin); // DEBUG
+
+    if (!origin) return callback(null, true); // allow Postman (optional)
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('CORS blocked: ' + origin));
+    }
+  },
+  credentials: true
 }));
 app.use(bodyParser.json());
 app.use(cookieParser()); // 🔴 READS COOKIES
@@ -105,11 +113,11 @@ app.post('/api/verify-otp', async (req, res) => {
                 );
 
                 res.cookie('jwt', token, {
-                    httpOnly: true,
-                    secure: process.env.NODE_ENV === 'production',
-                    sameSite: 'none',
-                    maxAge: 7 * 24 * 60 * 60 * 1000
-                });
+  httpOnly: true,
+  secure: true, // MUST be true on Render (HTTPS)
+  sameSite: 'none',
+  maxAge: 7 * 24 * 60 * 60 * 1000
+});
 
                 return res.json({ message: "Login Success", isNewUser: false, user });
             } else {
@@ -167,11 +175,11 @@ app.post('/api/complete-profile', async (req, res) => {
         );
 
         res.cookie('jwt', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'none',
-            maxAge: 7 * 24 * 60 * 60 * 1000 
-        });
+  httpOnly: true,
+  secure: true, // MUST be true on Render (HTTPS)
+  sameSite: 'none',
+  maxAge: 7 * 24 * 60 * 60 * 1000
+});
 
         res.status(201).json({ message: "Profile Created", user: newUser });
     } catch (err) {
