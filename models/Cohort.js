@@ -47,6 +47,7 @@ const cohortSchema = new mongoose.Schema({
   // NEW: Added "What you will learn" section
   whatulearn: [{
     text: { type: String, required: true },
+    desc: { type: String, required: true },
     imageurl: { type: String, required: true }
   }],
 

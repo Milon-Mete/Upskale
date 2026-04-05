@@ -5,6 +5,7 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
 
 // 🔴 IMPORT SECURITY MIDDLEWARE
 const { requireAuth, adminOnly } = require('./middleware/auth');
@@ -22,6 +23,7 @@ const Cohort = require('./models/Cohort');
 const Masterclass = require('./models/Masterclass');
 const Referral = require('./models/Referral');
 const BiteSizeCourse = require('./models/BiteSizeCourse');
+const Otp = require('./models/Otp')
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -54,35 +56,148 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("✅ MongoDB Connected"))
     .catch(err => console.error("❌ DB Error:", err));
 
-// ==========================================
-// 👤 REAL TWILIO AUTH ROUTES (PUBLIC)
-// ==========================================
+
+    app.post('/api/send-otp', async (req, res) => {
+    let { phone } = req.body;
+    
+    if (!phone) return res.status(400).json({ message: "Phone number required" });
+
+    // Clean phone number
+    let cleanPhone = phone.replace(/[\s-+]/g, '');
+    if (cleanPhone.startsWith('91') && cleanPhone.length === 12) {
+        cleanPhone = cleanPhone.slice(2);
+    }
+
+    if (cleanPhone.length !== 10) {
+        return res.status(400).json({ message: "Invalid phone number format. Require 10 digits." });
+    }
+
+    try {
+        // 1. Generate 6-digit OTP
+        const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+        // 2. Delete any existing OTP for this number to prevent conflicts
+        await Otp.deleteMany({ phone: cleanPhone });
+
+        // 3. Save new OTP to database
+        await Otp.create({ phone: cleanPhone, otp: generatedOtp });
+
+        // 4. MOCK SMS SEND (Console Log)
+        console.log('\n=========================================');
+        console.log(`🛠️ DEV MODE: MOCK SMS DISPATCHED`);
+        console.log(`📱 To Phone : ${cleanPhone}`);
+        console.log(`🔑 OTP Code : ${generatedOtp}`);
+        console.log('=========================================\n');
+
+        // Simulate network delay (optional, but good for testing frontend loading states)
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        res.json({ success: true, message: "OTP Sent Successfully (Check Console)" });
+    } catch (error) {
+        console.error("❌ Send Error:", error.message);
+        res.status(500).json({ message: "Failed to process OTP request", error: error.message });
+    }
+});
+
+app.post('/api/verify-otp', async (req, res) => {
+    let { phone, otp } = req.body;
+
+    if (!phone || !otp) return res.status(400).json({ message: "Phone and OTP required" });
+
+    // Clean phone to match DB
+    let cleanPhone = phone.replace(/[\s-+]/g, '');
+    if (cleanPhone.startsWith('91') && cleanPhone.length === 12) cleanPhone = cleanPhone.slice(2);
+
+    try {
+        // 1. Check database for the OTP
+        const validOtpRecord = await Otp.findOne({ phone: cleanPhone, otp: otp });
+
+        if (!validOtpRecord) {
+            return res.status(400).json({ message: "Invalid or Expired OTP" });
+        }
+
+        // 2. OTP is valid, delete it so it cannot be reused
+        await Otp.deleteOne({ _id: validOtpRecord._id });
+
+        // 3. Proceed with user lookup
+        const user = await User.findOne({ phone: `+91${cleanPhone}` }); 
+        
+        if (user) {
+            // EXISTING USER LOGIN
+            const token = jwt.sign(
+                { id: user._id, role: user.role }, 
+                process.env.JWT_SECRET, 
+                { expiresIn: '7d' }
+            );
+
+            res.cookie('jwt', token, {
+                httpOnly: true,
+                secure: true, 
+                sameSite: 'none',
+                maxAge: 7 * 24 * 60 * 60 * 1000
+            });
+
+            return res.json({ message: "Login Success", isNewUser: false, user });
+        } else {
+            // NEW USER
+            return res.json({ message: "OTP Verified", isNewUser: true });
+        }
+    } catch (error) {
+        console.error("❌ Verify Error:", error.message);
+        res.status(500).json({ message: "Verification process failed" });
+    }
+});
 
 app.post('/api/send-otp', async (req, res) => {
     let { phone } = req.body;
     
     if (!phone) return res.status(400).json({ message: "Phone number required" });
 
-    let cleanPhone = phone.replace(/[\s-]/g, '');
-    if (cleanPhone.length === 10 && !cleanPhone.startsWith('+')) {
-        cleanPhone = `+91${cleanPhone}`;
-    } else if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) {
-        cleanPhone = `+${cleanPhone}`;
+    // Clean phone number - Fast2SMS prefers 10 digits without country code for Indian numbers
+    let cleanPhone = phone.replace(/[\s-+]/g, '');
+    if (cleanPhone.startsWith('91') && cleanPhone.length === 12) {
+        cleanPhone = cleanPhone.slice(2);
+    }
+
+    if (cleanPhone.length !== 10) {
+        return res.status(400).json({ message: "Invalid phone number format. Require 10 digits." });
     }
 
     try {
-        console.log(`[Twilio] Attempting to send OTP to: ${cleanPhone}`);
+        // 1. Generate 6-digit OTP
+        const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
+        // 2. Delete any existing OTP for this number to prevent conflicts
+        await Otp.deleteMany({ phone: cleanPhone });
+
+        // 3. Save new OTP to database
+        await Otp.create({ phone: cleanPhone, otp: generatedOtp });
+
+        console.log(`[Fast2SMS] Attempting to send OTP to: ${cleanPhone}`);
         
-        const verification = await client.verify.v2.services(verifyServiceSid)
-            .verifications
-            .create({ to: cleanPhone, channel: 'sms' });
+        // 4. Send via Fast2SMS (PRE-DLT TESTING ROUTE)
+        const response = await axios.post(
+            'https://www.fast2sms.com/dev/bulkV2',
+            {
+                variables_values: generatedOtp,
+                route: 'otp',
+                numbers: cleanPhone,
+            },
+            {
+                headers: {
+                    'authorization': process.env.FAST2SMS_API_KEY, 
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        if (response.data.return !== true) {
+            throw new Error("Fast2SMS rejected the request.");
+        }
 
         res.json({ success: true, message: "OTP Sent Successfully" });
     } catch (error) {
-        console.error("❌ Twilio Send Error:", error.message);
-        if (error.code === 60200) {
-            return res.status(400).json({ message: "Invalid phone number format. Use +91xxxxxxxxxx" });
-        }
+        console.error("❌ Fast2SMS Send Error:", error.response ? error.response.data : error.message);
         res.status(500).json({ message: "Failed to send OTP", error: error.message });
     }
 });
@@ -92,42 +207,46 @@ app.post('/api/verify-otp', async (req, res) => {
 
     if (!phone || !otp) return res.status(400).json({ message: "Phone and OTP required" });
 
-    let cleanPhone = phone.replace(/[\s-]/g, '');
-    if (cleanPhone.length === 10 && !cleanPhone.startsWith('+')) cleanPhone = `+91${cleanPhone}`;
-    else if (cleanPhone.length === 12 && cleanPhone.startsWith('91')) cleanPhone = `+${cleanPhone}`;
+    // Clean phone to match what was saved in the DB
+    let cleanPhone = phone.replace(/[\s-+]/g, '');
+    if (cleanPhone.startsWith('91') && cleanPhone.length === 12) cleanPhone = cleanPhone.slice(2);
 
     try {
-        const verificationCheck = await client.verify.v2.services(verifyServiceSid)
-            .verificationChecks
-            .create({ to: cleanPhone, code: otp });
+        // 1. Check database for the OTP
+        const validOtpRecord = await Otp.findOne({ phone: cleanPhone, otp: otp });
 
-        if (verificationCheck.status === 'approved') {
-            const user = await User.findOne({ phone: cleanPhone });
-            
-            if (user) {
-                // 🔴 SET SECURE COOKIE FOR EXISTING USER
-                const token = jwt.sign(
-                    { id: user._id, role: user.role }, 
-                    process.env.JWT_SECRET, 
-                    { expiresIn: '7d' }
-                );
+        if (!validOtpRecord) {
+            return res.status(400).json({ message: "Invalid or Expired OTP" });
+        }
 
-                res.cookie('jwt', token, {
-  httpOnly: true,
-  secure: true, // MUST be true on Render (HTTPS)
-  sameSite: 'none',
-  maxAge: 7 * 24 * 60 * 60 * 1000
-});
+        // 2. OTP is valid, delete it so it cannot be reused
+        await Otp.deleteOne({ _id: validOtpRecord._id });
 
-                return res.json({ message: "Login Success", isNewUser: false, user });
-            } else {
-                return res.json({ message: "OTP Verified", isNewUser: true });
-            }
+        // 3. Proceed with existing user lookup and JWT logic
+        const user = await User.findOne({ phone: `+91${cleanPhone}` }); // Assuming you store with +91 in User model
+        
+        if (user) {
+            // 🔴 EXISTING USER LOGIN
+            const token = jwt.sign(
+                { id: user._id, role: user.role }, 
+                process.env.JWT_SECRET, 
+                { expiresIn: '7d' }
+            );
+
+            res.cookie('jwt', token, {
+                httpOnly: true,
+                secure: true, 
+                sameSite: 'none',
+                maxAge: 7 * 24 * 60 * 60 * 1000
+            });
+
+            return res.json({ message: "Login Success", isNewUser: false, user });
         } else {
-            res.status(400).json({ message: "Invalid or Expired OTP" });
+            // 🔴 NEW USER PROCEED TO PROFILE COMPLETION
+            return res.json({ message: "OTP Verified", isNewUser: true });
         }
     } catch (error) {
-        console.error("❌ Twilio Verify Error:", error.message);
+        console.error("❌ Verify Error:", error.message);
         res.status(500).json({ message: "Verification process failed" });
     }
 });

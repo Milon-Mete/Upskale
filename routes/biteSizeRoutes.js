@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const BiteSizeCourse = require('../models/BiteSizeCourse');
 const User = require('../models/User');
 const Order = require('../models/Order');
-const Certificate = require('../models/Certificate'); // 🔴 NEW: Added for auto-certificates
+const Certificate = require('../models/Certificate'); 
 
 // 🔴 SECURE MIDDLEWARE IMPORTED
 const { requireAuth, adminOnly } = require('../middleware/auth'); 
@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
     try {
         const list = await BiteSizeCourse.find(
             { isLocked: false },
-            '-content -quiz' // 🔴 Hide premium content and quiz details from public list
+            '-content -quiz' // Hide premium content and quiz details from public list
         ).sort({ createdAt: -1 });
         
         res.json(list);
@@ -37,8 +37,8 @@ router.get('/', async (req, res) => {
 router.get('/:slug', async (req, res) => {
     try {
         const item = await BiteSizeCourse.findOne({ slug: req.params.slug })
-            // 🔴 ANTI-CHEAT: Hide video URLs AND correct quiz answers from public view
-            .select('-content.videoUrl -quiz.questions.correctAnswer'); 
+            // 🔴 ANTI-CHEAT FIXED: Hide both old `videoUrl` AND new multi-language `videoUrls`
+            .select('-content.videoUrl -content.videoUrls -quiz.questions.correctAnswer'); 
 
         if (!item) return res.status(404).json({ message: "Course Not Found" });
 
@@ -201,7 +201,7 @@ router.get('/content/:id', requireAuth, async (req, res) => {
     }
 });
 
-// 🔴 NEW: Toggle Like on a specific short video
+// Toggle Like on a specific short video
 router.post('/content/:courseId/like/:contentId', requireAuth, async (req, res) => {
     try {
         const { courseId, contentId } = req.params;
@@ -228,7 +228,7 @@ router.post('/content/:courseId/like/:contentId', requireAuth, async (req, res) 
     }
 });
 
-// 🔴 NEW: Record a view for analytics
+// Record a view for analytics
 router.post('/content/:courseId/view/:contentId', requireAuth, async (req, res) => {
     try {
         const { courseId, contentId } = req.params;
@@ -248,14 +248,12 @@ router.post('/content/:courseId/view/:contentId', requireAuth, async (req, res) 
 // 5. AUTOMATED QUIZ & CERTIFICATE ISSUANCE (SECURED)
 // =====================================================
 
-// 🔴 NEW: The magic TV route - Grading the quiz and issuing the certificate instantly
 router.post('/submit-quiz/:id', requireAuth, async (req, res) => {
     try {
         const courseId = req.params.id;
         const userId = req.user._id;
         const { answers } = req.body; 
 
-        // 🔴 DEBUG TRACER: THIS PRINTS IN YOUR TERMINAL
         console.log("\n=== QUIZ SUBMISSION DEBUG ===");
         console.log("1. Raw Answers from React:", answers);
 
@@ -276,12 +274,10 @@ router.post('/submit-quiz/:id', requireAuth, async (req, res) => {
             const userAnswer = answers[questionIdStr];
             const actualAnswer = q.correctAnswer;
 
-            // 🔴 DEBUG TRACER: THIS SHOWS THE EXACT MISMATCH
             console.log(`\nQ${index + 1}: ID = ${questionIdStr}`);
             console.log(` -> User picked : "${userAnswer}"`);
             console.log(` -> Correct is  : "${actualAnswer}"`);
 
-            // I added .trim() to ensure accidental spaces in your database don't fail the user
             if (userAnswer && userAnswer.trim() === actualAnswer.trim()) {
                 console.log(` -> RESULT: ✅ MATCH!`);
                 correctCount++;
@@ -356,7 +352,6 @@ router.post('/submit-quiz/:id', requireAuth, async (req, res) => {
 
 router.get('/admin/all', adminOnly, async (req, res) => {
     try {
-        // Admin needs the correct answers to see/edit them, so we do NOT exclude them here
         const list = await BiteSizeCourse.find({}).sort({ createdAt: -1 });
         res.json(list);
     } catch (err) {

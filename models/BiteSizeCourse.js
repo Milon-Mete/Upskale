@@ -17,21 +17,34 @@ const questionSchema = new mongoose.Schema({
 // 3. Main Bite-Sized Course Schema
 const biteSizeCourseSchema = new mongoose.Schema({
   title: { type: String, required: true },
-  highlight: { type: String, required: true }, // e.g., "EXCEL WITH AI"
-  tag: { type: String, required: true }, // e.g., "AI Automation"
+  highlight: { type: String, required: true }, 
+  tag: { type: String, required: true }, 
   highlightColor: { type: String, default: "text-emerald-400" },
   glowColor: { type: String, default: "md:group-hover:shadow-emerald-500/20" },
-  image: { type: String, required: true }, // Main Course Thumbnail (Cloudinary URL)
-  iconName: { type: String, required: true }, // e.g., "FileSpreadsheet"
+  image: { type: String, required: true }, 
+  iconName: { type: String, required: true }, 
   slug: { type: String, required: true, unique: true },
   isLocked: { type: Boolean, default: false },
   
-  // 🔴 UPDATED CONTENT ARRAY (Seekho/Zudo Style Shorts)
+  // 🔴 THE FREE PREVIEW TRAILER
+  trailerUrl: { type: String, default: "" }, 
+  
+  // 🔴 MULTI-LANGUAGE CONTENT ARRAY 
   content: [{
     title: { type: String, required: true },
     description: { type: String },
-    thumbnail: { type: String }, // Individual thumbnail for each short video
-    videoUrl: { type: String, required: true }, // Link to Cloudinary
+    thumbnail: { type: String }, 
+    
+    // The Multi-Language Video Object
+    videoUrls: {
+        bn: { type: String, required: true }, // Bengali is mandatory/default
+        en: { type: String, default: "" },    // English
+        hi: { type: String, default: "" }     // Hindi
+    },
+    
+    // Keeping this temporarily so old data doesn't instantly crash your app
+    videoUrl: { type: String }, 
+
     order: { type: Number, default: 0 },
     views: { type: Number, default: 0 },
     likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
@@ -42,11 +55,11 @@ const biteSizeCourseSchema = new mongoose.Schema({
     standard: pricingSchema
   },
 
-  // 🔴 NEW: CERTIFICATE QUIZ SYSTEM
+  // CERTIFICATE QUIZ SYSTEM
   quiz: {
     enabled: { type: Boolean, default: false },
-    passingScore: { type: Number, default: 70 }, // 70% threshold required to pass
-    questions: [questionSchema] // Will hold the 10 questions the admin adds
+    passingScore: { type: Number, default: 70 }, 
+    questions: [questionSchema] 
   }
 }, { timestamps: true });
 
